@@ -1,0 +1,66 @@
+---
+title: "SBC Homers"
+author: "Eric DuBose"
+date: "5/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Analysis Projects/SBC/2034")
+library(ggplot2)
+library(dplyr)
+library(janitor)
+library(ggthemes)
+```
+
+```{r}
+hitters <- read.csv('sbc.csv', header = TRUE)
+for (i in 1:ncol(hitters)){
+  colnames(hitters)[i] <- tolower(colnames(hitters)[i])}
+hitters <- filter(hitters, year > 1950)
+str(hitters)
+```
+```{r}
+hrbox <- ggplot(hitters, aes(year, homeruns, group=year)) +
+  geom_boxplot(coef = 1000) + 
+  theme_wsj() + 
+  geom_smooth(method = 'lm', formula = y~x) +
+  labs(title = "Distribution of Homeruns from 1950 to Present", x = "Year", y = "Homeruns")
+
+hrbox + theme(
+  plot.title = element_text(size = 14),
+  axis.title.x = element_text(size = 10),
+  axis.title.y = element_text(size = 10))
+```
+
+```{r}
+hr_density <- ggplot(hitters, aes(x=homeruns, fill = posgroup)) + 
+  geom_density(alpha = .3) + 
+  theme_wsj() + 
+  labs(title = "Density Plot of Homeruns from 1950 to Present", x = "Homeruns", y = "Density")
+
+hr_density + theme(
+  plot.title = element_text(size = 14),
+  axis.title.x = element_text(size = 10),
+  axis.title.y = element_text(size = 10))
+```
+
+```{r}
+dingers <- filter(hitters, homeruns > 35)
+posbreakdown <- ggplot(dingers, aes(x = posgroup, y = homeruns, fill = position)) + 
+  geom_boxplot(coef=1000) + 
+  theme_wsj() + 
+  labs(title = "Boxplots by position, 35+ Homeruns minimum", x = "IF/OF", y = "Homeruns")
+
+posbreakdown + theme(
+  plot.title = element_text(size = 12),
+  axis.title.x = element_text(size = 10),
+  axis.title.y = element_text(size = 10))
+posbreakdown
+```
+
+```{r}
+dingers
+```
+

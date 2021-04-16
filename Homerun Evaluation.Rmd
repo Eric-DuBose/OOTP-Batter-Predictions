@@ -1,0 +1,65 @@
+---
+title: "SBC Batting Statss"
+author: "Eric DuBose"
+date: "5/31/2020"
+output: html_document
+---
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+setwd("~/Analysis Projects/SBC/2034")
+library(tidyverse)
+```
+
+```{r}
+stats <- read.csv('team_batting_stats.csv',header=TRUE)
+statscy <- stats[stats$YEAR == 2034,]
+```
+
+```{r plots, fig.width= = 14}
+ggplot(stats, aes(x = YEAR, y= HR, color = LEAGUE)) +
+  geom_boxplot(aes(group = YEAR)) + 
+  stat_summary(fun = mean, geom="point") + 
+  labs(title = "Homeruns per Team and League") 
+
+ggplot(stats, aes(x = YEAR, y= HR_PCT, color = LEAGUE)) +
+  geom_boxplot(aes(group = YEAR)) + 
+  stat_summary(fun = mean, geom="point") + 
+  labs(title = "Homerun % of At Bats per Team and League")
+
+statscy <- statscy[order(statscy$HR, decreasing = FALSE),]
+ggplot(statscy, aes(x=TEAM, y=HR, fill = LEAGUE,)) +
+  geom_col(position = 'dodge') + 
+  labs(title = "Homeruns by Team in 2034") + 
+  theme(axis.text.x = element_text(angle = 45))
+
+statsgrp <- stats %>%
+  select(YEAR, TEAM, HR, LEAGUE) %>%
+  group_by(TEAM, LEAGUE, YEAR) %>%
+  summarize(TOT_HR = sum(HR, na.rm = TRUE))
+
+head(statsgrp)
+ggplot(statsgrp, aes(x=TEAM, y=TOT_HR, color=YEAR)) +
+  geom_point() +  
+  stat_smooth() + 
+  labs(title = "Homeruns By League", y = "Total Homeruns")
+
+ggplot(stats, aes(x = YEAR, y= AVG, color = LEAGUE)) +
+  geom_boxplot(aes(group = YEAR)) + 
+  stat_summary(fun = mean, geom="point") + 
+  labs(title = "Average per Team and League")
+
+ggplot(stats, aes(x = YEAR, y= OBP, color = LEAGUE)) +
+  geom_boxplot(aes(group = YEAR)) + 
+  stat_summary(fun = mean, geom="point") + 
+  labs(title = "On-Base Percentage per Team and League")
+
+ggplot(stats, aes(x = YEAR, y=IBB, color = LEAGUE)) +
+  geom_boxplot(aes(group = YEAR)) + 
+  stat_summary(fun = mean, geom="point") + 
+  labs(title = "IBB per Team and League")
+```
+
+```{r}
+
+```
+

@@ -24,11 +24,11 @@ library(glmnet)
 ```{r Average Modeling}
 # Files for Test Data, and Current Year Data
 sbc <- read.csv('batter_regression.csv', header = TRUE, stringsAsFactors = FALSE)
-sbc_2039 <- read.csv('batter_regression2039.csv',header = TRUE, stringsAsFactors = FALSE)
+sbc_2035 <- read.csv('batter_regression2035.csv',header = TRUE, stringsAsFactors = FALSE)
 
 # Preparing the Data to exclude factors, and select only numeric values under consideration for modeling
 sbc_prep <- sbc[,-c(1:8)]
-sbc_2039_prep <- sbc_2039[,-c(1:8)]
+sbc_2035_prep <- sbc_2035[,-c(1:8)]
 
 # Limit the prediction models to batters with only 300 at bats
 sbc_ab <- sbc[sbc$at_bats > 300,]
@@ -41,8 +41,8 @@ rownames(sbc_prep) <- 1:nrow(sbc_prep)
 # Set up the prediction dataframe, as well as projection dataframes
 sbc_prep_attr <- sbc_ab_prep[,c(1,20:24,43:63)]
 sbc_prep_res <- sbc_ab_prep[,c(2:19,58:63)]
-full_prep_attr <- sbc_2039_prep[,c(1,20:24,43:63)]
-full_prep_res <- sbc_2039_prep[,c(2:19,58:63)]
+full_prep_attr <- sbc_2035_prep[,c(1,20:24,43:63)]
+full_prep_res <- sbc_2035_prep[,c(2:19,58:63)]
 
 # Select the dataset to use: Attributes, or On Field Performance.
 # Player Attributes will include Contact, etc, where as On Field Performance is used as the predictors
@@ -177,7 +177,7 @@ model_review_avg
 ```{r Assigning Predictions to the dataset}
 # Assign prediction model to the new year's dataset to assign the predictions for all Regular Season players
 avgcol <- which( colnames(full_avg)=="avg" )
-sbc_2039$pred_avg <- predict(both_model_avg, full_avg[,-avgcol])*(1-(both_err_avg/100))
+sbc_2035$pred_avg <- predict(both_model_avg, full_avg[,-avgcol])*(1-(both_err_avg/100))
 ```
 
 
@@ -279,7 +279,7 @@ model_review_obp
 
 ```{r Assigning Predictions to the dataset}
 obpcol <- which( colnames(full_obp)=="obp" )
-sbc_2039$pred_obp <- predict(elastic_obp, as.matrix(full_obp[,-obpcol]), s = 'lambda.min', type = 'class')*(1-(elastic_err_obp/100))
+sbc_2035$pred_obp <- predict(elastic_obp, as.matrix(full_obp[,-obpcol]), s = 'lambda.min', type = 'class')*(1-(elastic_err_obp/100))
 ```
 
 ```{r Slugging Modeling}
@@ -380,13 +380,13 @@ model_review_slg
 
 ```{r Assigning Predictions to the dataset}
 slgcol <- which( colnames(full_slg)=="slg" )
-sbc_2039$pred_slg <- predict(lasso_slg, as.matrix(full_slg[,-slgcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_slg/100))
+sbc_2035$pred_slg <- predict(lasso_slg, as.matrix(full_slg[,-slgcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_slg/100))
 ```
 
 
 ```{r}
-sbc_2039$pred_ops <- sbc_2039$pred_slg + sbc_2039$pred_obp
-sbc_2039$pred_iso <- round(sbc_2039$pred_slg - sbc_2039$pred_avg,3)
+sbc_2035$pred_ops <- sbc_2035$pred_slg + sbc_2035$pred_obp
+sbc_2035$pred_iso <- round(sbc_2035$pred_slg - sbc_2035$pred_avg,3)
 ```
 
 
@@ -488,13 +488,13 @@ model_review_babip
 
 ```{r Assigning Predictions to the dataset}
 babipcol <- which( colnames(full_babip)=="babip" )
-sbc_2039$pred_babip <- predict(lasso_babip, as.matrix(full_babip[,-babipcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_babip/100))
+sbc_2035$pred_babip <- predict(lasso_babip, as.matrix(full_babip[,-babipcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_babip/100))
 ```
 
 
 
 ```{r}
-sbc_final <- sbc_2039[,c(2:4,9,72:77)]
-write.csv(sbc_final,"~\\Analysis Projects\\SBC\\2034\\2039_batter_predictions.csv")
+sbc_final <- sbc_2035[,c(2:4,9,72:77)]
+write.csv(sbc_final,"~\\Analysis Projects\\SBC\\2034\\2035_batter_predictions.csv")
 ```
 
