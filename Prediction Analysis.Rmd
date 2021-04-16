@@ -1,0 +1,500 @@
+---
+title: "SBC Batter Regression"
+author: "Eric DuBose"
+date: "7/4/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r notebook setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+setwd("~/Analysis Projects/SBC/2034")
+rm(list=ls())
+options('digits'=3)
+```
+
+
+```{r libraries, echo=FALSE, include = FALSE}
+library(tidyverse)
+library(caret)
+library(glmnet)
+```
+
+```{r Average Modeling}
+# Files for Test Data, and Current Year Data
+sbc <- read.csv('batter_regression.csv', header = TRUE, stringsAsFactors = FALSE)
+sbc_2039 <- read.csv('batter_regression2039.csv',header = TRUE, stringsAsFactors = FALSE)
+
+# Preparing the Data to exclude factors, and select only numeric values under consideration for modeling
+sbc_prep <- sbc[,-c(1:8)]
+sbc_2039_prep <- sbc_2039[,-c(1:8)]
+
+# Limit the prediction models to batters with only 300 at bats
+sbc_ab <- sbc[sbc$at_bats > 300,]
+sbc_ab_prep <- sbc_ab[,-c(1:8)]
+
+# Re-index the datasets to reflect proper row indicies
+rownames(sbc_ab) <- 1:nrow(sbc_ab)
+rownames(sbc_prep) <- 1:nrow(sbc_prep)
+
+# Set up the prediction dataframe, as well as projection dataframes
+sbc_prep_attr <- sbc_ab_prep[,c(1,20:24,43:63)]
+sbc_prep_res <- sbc_ab_prep[,c(2:19,58:63)]
+full_prep_attr <- sbc_2039_prep[,c(1,20:24,43:63)]
+full_prep_res <- sbc_2039_prep[,c(2:19,58:63)]
+
+# Select the dataset to use: Attributes, or On Field Performance.
+# Player Attributes will include Contact, etc, where as On Field Performance is used as the predictors
+# Must be updated to reflect one. It flows through the additional functions below.
+full_dataset <- full_prep_attr
+chosen_dataset <- sbc_prep_attr
+
+# Create variables that will be used specifically for the predicted value (Average, OBP, SLG, BABIP)
+# Full represents the total dataset we will use for predictions, generally the new season.
+sbc_avg <- select(chosen_dataset, -c('obp','slg','ops','iso','babip'))
+sbc_obp <- select(chosen_dataset, -c('avg','slg','ops','iso','babip'))
+sbc_slg <- select(chosen_dataset, -c('avg','obp','ops','iso','babip'))
+sbc_babip <- select(chosen_dataset, -c('avg','obp','slg','ops','iso'))
+full_avg <- select(full_dataset, -c('obp','slg','ops','iso','babip'))
+full_obp <- select(full_dataset, -c('avg','slg','ops','iso','babip'))
+full_slg <- select(full_dataset, -c('avg','obp','ops','iso','babip'))
+full_babip <- select(full_dataset, -c('avg','obp','slg','ops','iso'))
+
+# This function evaluates the Sum of Squared Errors, R-Squared value, and assigns the values to a list
+eval_results <- function(true, predicted, df){
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true-mean(true))^2)
+  R_square <- (1 - (SSE / SST))
+  RMSE <- sqrt(SSE/nrow(df))
+  list <- list("R_sq" = R_square, "RMSE" = RMSE)
+}
+```
+
+```{r Average Modeling}
+
+# Set random seed to ensure replication for randomized selections for training and validation.
+set.seed(123)
+
+# Set Training and Validation Datasets, with a 70%/30% split, created at random.
+dt_avg <- createDataPartition(sbc_avg$avg, p=.7, list = FALSE, times = 1)
+train_avg <- sbc_avg[dt_avg,]
+valid_avg <- sbc_avg[-dt_avg,]
+
+# Number of Columns in the Total Dataset, Training Dataset, and Validation Dataset
+avg_cols <- ncol(sbc)
+train_cols_avg <- ncol(train_avg)
+valid_cols_avg <- ncol(valid_avg)
+
+# Create a Linear model, using all features in the training dataset
+lmodel_avg <- lm(avg~., train_avg)
+
+# Creating stepwise regression models using Backwards, Forwards, and both directions. Process done 
+# to allow for variation in model creation, and optimizing the AIC of each model iteration
+back_model_avg <- step(lmodel_avg, direction = "backward", trace = 0)
+fwd_model_avg <- step(lm(avg~1., train_avg), scope = formula(lm(avg~., train_avg)),direction = "forward", trace = 0)
+both_model_avg <-step(lmodel_avg, 
+     scope = list(lower = formula(lm(avg~1, train_avg)), # Lower bound is the foundation for "Forward"
+                  upper = formula(lm(avg~., train_avg))), # Upper bound is the foundation for "Back"
+                  direction = "both", trace = 0)
+
+# Creating the Lasso Model. The model cross validates the data.
+lasso_avg <- cv.glmnet(x = as.matrix(train_avg[,-train_cols_avg]), 
+                         y = as.matrix(train_avg[,train_cols_avg]), 
+                         alpha = 1, # 1 for Lasso Regression
+                         nfolds = ncol(train_avg)-1, # Number of Folds will be the number of columns - 1
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE) 
+
+# Creating the Elastic-Net Model. The model cross validates the data.
+elastic_avg <- cv.glmnet(x = as.matrix(train_avg[,-train_cols_avg]), 
+                         y = as.matrix(train_avg[,train_cols_avg]), 
+                         alpha = 0, # 1 for Lasso Regression
+                         nfolds = ncol(train_avg)-1, # Number of Folds will be the number of columns - 1
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE)
+
+# Predict the average given the specific models that were built
+linear_pred_avg <- predict(lmodel_avg, valid_avg[,-valid_cols_avg])
+back_pred_avg <- predict(back_model_avg, valid_avg[,-valid_cols_avg])
+fwd_pred_avg <- predict(fwd_model_avg, valid_avg[,-valid_cols_avg])
+both_pred_avg <- predict(both_model_avg, valid_avg[,-valid_cols_avg])
+lasso_pred_avg <- predict(lasso_avg, as.matrix(valid_avg[,-valid_cols_avg]), s = 'lambda.min', type = 'class')
+elastic_pred_avg <- predict(elastic_avg, as.matrix(valid_avg[,-valid_cols_avg]), s = 'lambda.min', type = 'class')
+
+# Attach the predictions to the validation dataset for each model
+valid_avg$linear_avg<- linear_pred_avg
+valid_avg$back_avg<- back_pred_avg
+valid_avg$fwd_avg<- fwd_pred_avg
+valid_avg$both_avg<- both_pred_avg
+valid_avg$lasso_avg<- lasso_pred_avg
+valid_avg$elastic_avg<- elastic_pred_avg
+
+# Calculate the error in prediction as a percentage for each model
+valid_avg$lin_err <-((valid_avg$avg / valid_avg$linear_avg)-1)*100
+valid_avg$back_err <- ((valid_avg$avg / valid_avg$back_avg)-1)*100
+valid_avg$fwd_err <- ((valid_avg$avg / valid_avg$fwd_avg)-1)*100
+valid_avg$both_err <- ((valid_avg$avg / valid_avg$both_avg)-1)*100
+valid_avg$lasso_err <- ((valid_avg$avg / valid_avg$lasso_avg)-1)*100
+valid_avg$elastic_err <- ((valid_avg$avg / valid_avg$elastic_avg)-1)*100
+
+# Calculate the mean error in prediction for each model
+lin_err_avg <- mean(valid_avg$lin_err)
+back_err_avg <- mean(valid_avg$back_err)
+fwd_err_avg <- mean(valid_avg$fwd_err)
+both_err_avg <- mean(valid_avg$both_err)
+lasso_err_avg <- mean(valid_avg$lasso_err)
+elastic_err_avg <- mean(valid_avg$elastic_err)
+
+# Construct a dataframe that will house all the model iterations, the R-Squared, RMSE, and Average Error Percentage.
+model_review_avg <- data.frame()
+model_review_avg <- rbind(model_review_avg,
+                      data.frame(Method = c("Linear","Step Back", "Step Forward", "Step Both", "Lasso","Elastic-Net"), 
+                      R_Squared = c(summary(lmodel_avg)$r.squared, 
+                                    summary(back_model_avg)$adj.r.squared, 
+                                    summary(fwd_model_avg)$adj.r.squared, 
+                                    summary(both_model_avg)$adj.r.squared,
+                                    eval_results(valid_avg$avg,lasso_pred_avg, valid_avg)$R_sq,
+                                    eval_results(valid_avg$avg,elastic_pred_avg, valid_avg)$R_sq
+                                    ), 
+                      RMSE = c(eval_results(valid_avg$avg,linear_pred_avg, valid_avg)$RMSE,
+                               eval_results(valid_avg$avg,back_pred_avg, valid_avg)$RMSE,
+                               eval_results(valid_avg$avg,fwd_pred_avg, valid_avg)$RMSE,
+                               eval_results(valid_avg$avg,both_pred_avg, valid_avg)$RMSE,
+                               eval_results(valid_avg$avg,lasso_pred_avg, valid_avg)$RMSE,
+                               eval_results(valid_avg$avg,elastic_pred_avg, valid_avg)$RMSE
+                               ),
+                      Avg_Err_Pct = c(lin_err_avg,back_err_avg,fwd_err_avg,both_err_avg,lasso_err_avg,elastic_err_avg)))
+
+# Orders the dataframe by Average Error Percentage descending, then RMSE ascending.
+model_review_avg <- (model_review_avg[order(-model_review_avg$Avg_Err_Pct,model_review_avg$RMSE),])
+model_review_avg
+```
+
+
+```{r Assigning Predictions to the dataset}
+# Assign prediction model to the new year's dataset to assign the predictions for all Regular Season players
+avgcol <- which( colnames(full_avg)=="avg" )
+sbc_2039$pred_avg <- predict(both_model_avg, full_avg[,-avgcol])*(1-(both_err_avg/100))
+```
+
+
+```{r On-Base-Pct Modeling}
+set.seed(1234)
+
+# Set Training and Validation Datasets
+dt_obp <- createDataPartition(sbc_obp$obp, p=.7, list = FALSE, times = 1)
+sbc_obp_only <- setNames(data.frame(sbc[,which(colnames(sbc)=="obp")]),"obp")
+train_obp <- sbc_obp[dt_obp,]
+valid_obp <- sbc_obp[-dt_obp,]
+obp_cols <- ncol(sbc)
+train_cols_obp <- ncol(train_obp)
+valid_cols_obp <- ncol(valid_obp)
+
+lmodel_obp <- lm(obp~., train_obp)
+
+step_lm_obp <- lm(obp~., train_obp)
+step_fwd_obp <- lm(obp~1., train_obp)
+back_model_obp <- step(step_lm_obp, direction = "backward", trace = 0)
+fwd_model_obp <- step(step_fwd_obp, scope = formula(lm(obp~., train_obp)),direction = "forward", trace = 0)
+both_model_obp <-step(step_lm_obp, 
+     scope = list(lower = formula(lm(obp~1, train_obp)), # Lower bound is the foundation for "Forward"
+                  upper = formula(lm(obp~., train_obp))), # Upper bound is the foundation for "Back"
+                  direction = "both", trace = 0)
+
+rsq_back_obp <- summary(back_model_obp)$adj.r.squared
+rsq_fwd_obp <- summary(fwd_model_obp)$adj.r.squared
+rsq_both_obp <- summary(both_model_obp)$adj.r.squared
+
+# cv.glmnet selected to allow for cross validation to occur.
+lasso_obp <- cv.glmnet(x = as.matrix(train_obp[,-train_cols_obp]), 
+                         y = as.matrix(train_obp[,train_cols_obp]), 
+                         alpha = 1, # 1 for Lasso Regression
+                         nfolds = ncol(train_obp)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE) 
+
+
+elastic_obp <- cv.glmnet(x = as.matrix(train_obp[,-train_cols_obp]), 
+                         y = as.matrix(train_obp[,train_cols_obp]), 
+                         alpha = 0, # 1 for Lasso Regression
+                         nfolds = ncol(train_obp)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE)
+
+
+linear_pred_obp <- predict(lmodel_obp, valid_obp[,-valid_cols_obp])
+back_pred_obp <- predict(back_model_obp, valid_obp[,-valid_cols_obp])
+fwd_pred_obp <- predict(fwd_model_obp, valid_obp[,-valid_cols_obp])
+both_pred_obp <- predict(both_model_obp, valid_obp[,-valid_cols_obp])
+lasso_pred_obp <- predict(lasso_obp, as.matrix(valid_obp[,-valid_cols_obp]), s = 'lambda.min', type = 'class')
+elastic_pred_obp <- predict(elastic_obp, as.matrix(valid_obp[,-valid_cols_obp]), s = 'lambda.min', type = 'class')
+
+valid_obp$linear_obp<- linear_pred_obp
+valid_obp$back_obp<- back_pred_obp
+valid_obp$fwd_obp<- fwd_pred_obp
+valid_obp$both_obp<- both_pred_obp
+valid_obp$lasso_obp<- lasso_pred_obp
+valid_obp$elastic_obp<- elastic_pred_obp
+valid_obp$lin_err <-((valid_obp$obp / valid_obp$linear_obp)-1)*100
+valid_obp$back_err <- ((valid_obp$obp / valid_obp$back_obp)-1)*100
+valid_obp$fwd_err <- ((valid_obp$obp / valid_obp$fwd_obp)-1)*100
+valid_obp$both_err <- ((valid_obp$obp / valid_obp$both_obp)-1)*100
+valid_obp$lasso_err <- ((valid_obp$obp / valid_obp$lasso_obp)-1)*100
+valid_obp$elastic_err <- ((valid_obp$obp / valid_obp$elastic_obp)-1)*100
+lin_err_obp <- mean(valid_obp$lin_err)
+back_err_obp <- mean(valid_obp$back_err)
+fwd_err_obp <- mean(valid_obp$fwd_err)
+both_err_obp <- mean(valid_obp$both_err)
+lasso_err_obp <- mean(valid_obp$lasso_err)
+elastic_err_obp <- mean(valid_obp$elastic_err)
+
+model_review_obp <- data.frame()
+model_review_obp <- rbind(model_review_obp,
+                      data.frame(Method = c("Linear","Step Back", "Step Forward", "Step Both", "Lasso","Elastic-Net"), 
+                      R_Squared = c(summary(lmodel_obp)$r.squared, 
+                                    rsq_back_obp, 
+                                    rsq_fwd_obp, 
+                                    rsq_both_obp,
+                                    eval_results(valid_obp$obp,lasso_pred_obp, valid_obp)$R_sq,
+                                    eval_results(valid_obp$obp,elastic_pred_obp, valid_obp)$R_sq
+                                    ), 
+                      RMSE = c(eval_results(valid_obp$obp,linear_pred_obp, valid_obp)$RMSE,
+                               eval_results(valid_obp$obp,back_pred_obp, valid_obp)$RMSE,
+                               eval_results(valid_obp$obp,fwd_pred_obp, valid_obp)$RMSE,
+                               eval_results(valid_obp$obp,both_pred_obp, valid_obp)$RMSE,
+                               eval_results(valid_obp$obp,lasso_pred_obp, valid_obp)$RMSE,
+                               eval_results(valid_obp$obp,elastic_pred_obp, valid_obp)$RMSE
+                               ),
+                      obp_Err_Pct = c(lin_err_obp,back_err_obp,fwd_err_obp,both_err_obp,lasso_err_obp,elastic_err_obp)))
+
+model_review_obp <- (model_review_obp[order(-model_review_obp$obp_Err_Pct,model_review_obp$RMSE),])
+model_review_obp
+```
+
+
+```{r Assigning Predictions to the dataset}
+obpcol <- which( colnames(full_obp)=="obp" )
+sbc_2039$pred_obp <- predict(elastic_obp, as.matrix(full_obp[,-obpcol]), s = 'lambda.min', type = 'class')*(1-(elastic_err_obp/100))
+```
+
+```{r Slugging Modeling}
+set.seed(1234)
+
+# Set Training and Validation Datasets
+dt_slg <- createDataPartition(sbc_slg$slg, p=.7, list = FALSE, times = 1)
+sbc_slg_only <- setNames(data.frame(sbc[,which(colnames(sbc)=="slg")]),"slg")
+train_slg <- sbc_slg[dt_slg,]
+valid_slg <- sbc_slg[-dt_slg,]
+slg_cols <- ncol(sbc)
+train_cols_slg <- ncol(train_slg)
+valid_cols_slg <- ncol(valid_slg)
+
+lmodel_slg <- lm(slg~., train_slg)
+
+step_lm_slg <- lm(slg~., train_slg)
+step_fwd_slg <- lm(slg~1., train_slg)
+back_model_slg <- step(step_lm_slg, direction = "backward", trace = 0)
+fwd_model_slg <- step(step_fwd_slg, scope = formula(lm(slg~., train_slg)),direction = "forward", trace = 0)
+both_model_slg <-step(step_lm_slg, 
+     scope = list(lower = formula(lm(slg~1, train_slg)), # Lower bound is the foundation for "Forward"
+                  upper = formula(lm(slg~., train_slg))), # Upper bound is the foundation for "Back"
+                  direction = "both", trace = 0)
+
+rsq_back_slg <- summary(back_model_slg)$adj.r.squared
+rsq_fwd_slg <- summary(fwd_model_slg)$adj.r.squared
+rsq_both_slg <- summary(both_model_slg)$adj.r.squared
+
+# cv.glmnet selected to allow for cross validation to occur.
+lasso_slg <- cv.glmnet(x = as.matrix(train_slg[,-train_cols_slg]), 
+                         y = as.matrix(train_slg[,train_cols_slg]), 
+                         alpha = 1, # 1 for Lasso Regression
+                         nfolds = ncol(train_slg)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE) 
+
+
+elastic_slg <- cv.glmnet(x = as.matrix(train_slg[,-train_cols_slg]), 
+                         y = as.matrix(train_slg[,train_cols_slg]), 
+                         alpha = 0, # 1 for Lasso Regression
+                         nfolds = ncol(train_slg)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE)
+
+
+linear_pred_slg <- predict(lmodel_slg, valid_slg[,-valid_cols_slg])
+back_pred_slg <- predict(back_model_slg, valid_slg[,-valid_cols_slg])
+fwd_pred_slg <- predict(fwd_model_slg, valid_slg[,-valid_cols_slg])
+both_pred_slg <- predict(both_model_slg, valid_slg[,-valid_cols_slg])
+lasso_pred_slg <- predict(lasso_slg, as.matrix(valid_slg[,-valid_cols_slg]), s = 'lambda.min', type = 'class')
+elastic_pred_slg <- predict(elastic_slg, as.matrix(valid_slg[,-valid_cols_slg]), s = 'lambda.min', type = 'class')
+
+valid_slg$linear_slg<- linear_pred_slg
+valid_slg$back_slg<- back_pred_slg
+valid_slg$fwd_slg<- fwd_pred_slg
+valid_slg$both_slg<- both_pred_slg
+valid_slg$lasso_slg<- lasso_pred_slg
+valid_slg$elastic_slg<- elastic_pred_slg
+valid_slg$lin_err <-((valid_slg$slg / valid_slg$linear_slg)-1)*100
+valid_slg$back_err <- ((valid_slg$slg / valid_slg$back_slg)-1)*100
+valid_slg$fwd_err <- ((valid_slg$slg / valid_slg$fwd_slg)-1)*100
+valid_slg$both_err <- ((valid_slg$slg / valid_slg$both_slg)-1)*100
+valid_slg$lasso_err <- ((valid_slg$slg / valid_slg$lasso_slg)-1)*100
+valid_slg$elastic_err <- ((valid_slg$slg / valid_slg$elastic_slg)-1)*100
+lin_err_slg <- mean(valid_slg$lin_err)
+back_err_slg <- mean(valid_slg$back_err)
+fwd_err_slg <- mean(valid_slg$fwd_err)
+both_err_slg <- mean(valid_slg$both_err)
+lasso_err_slg <- mean(valid_slg$lasso_err)
+elastic_err_slg <- mean(valid_slg$elastic_err)
+
+model_review_slg <- data.frame()
+model_review_slg <- rbind(model_review_slg,
+                      data.frame(Method = c("Linear","Step Back", "Step Forward", "Step Both", "Lasso","Elastic-Net"), 
+                      R_Squared = c(summary(lmodel_slg)$r.squared, 
+                                    rsq_back_slg, 
+                                    rsq_fwd_slg, 
+                                    rsq_both_slg,
+                                    eval_results(valid_slg$slg,lasso_pred_slg, valid_slg)$R_sq,
+                                    eval_results(valid_slg$slg,elastic_pred_slg, valid_slg)$R_sq
+                                    ), 
+                      RMSE = c(eval_results(valid_slg$slg,linear_pred_slg, valid_slg)$RMSE,
+                               eval_results(valid_slg$slg,back_pred_slg, valid_slg)$RMSE,
+                               eval_results(valid_slg$slg,fwd_pred_slg, valid_slg)$RMSE,
+                               eval_results(valid_slg$slg,both_pred_slg, valid_slg)$RMSE,
+                               eval_results(valid_slg$slg,lasso_pred_slg, valid_slg)$RMSE,
+                               eval_results(valid_slg$slg,elastic_pred_slg, valid_slg)$RMSE
+                               ),
+                      slg_Err_Pct = c(lin_err_slg,back_err_slg,fwd_err_slg,both_err_slg,lasso_err_slg,elastic_err_slg)))
+
+model_review_slg <- (model_review_slg[order(-model_review_slg$slg_Err_Pct,model_review_slg$RMSE),])
+model_review_slg
+```
+
+
+```{r Assigning Predictions to the dataset}
+slgcol <- which( colnames(full_slg)=="slg" )
+sbc_2039$pred_slg <- predict(lasso_slg, as.matrix(full_slg[,-slgcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_slg/100))
+```
+
+
+```{r}
+sbc_2039$pred_ops <- sbc_2039$pred_slg + sbc_2039$pred_obp
+sbc_2039$pred_iso <- round(sbc_2039$pred_slg - sbc_2039$pred_avg,3)
+```
+
+
+```{r BABIP Modeling}
+set.seed(12345)
+
+# Set Training and Validation Datasets
+dt_babip <- createDataPartition(sbc_babip$babip, p=.7, list = FALSE, times = 1)
+sbc_babip_only <- setNames(data.frame(sbc[,which(colnames(sbc)=="babip")]),"babip")
+train_babip <- sbc_babip[dt_babip,]
+valid_babip <- sbc_babip[-dt_babip,]
+babip_cols <- ncol(sbc)
+train_cols_babip <- ncol(train_babip)
+valid_cols_babip <- ncol(valid_babip)
+
+lmodel_babip <- lm(babip~., train_babip)
+
+step_lm_babip <- lm(babip~., train_babip)
+step_fwd_babip <- lm(babip~1., train_babip)
+back_model_babip <- step(step_lm_babip, direction = "backward", trace = 0)
+fwd_model_babip <- step(step_fwd_babip, scope = formula(lm(babip~., train_babip)),direction = "forward", trace = 0)
+both_model_babip <-step(step_lm_babip, 
+     scope = list(lower = formula(lm(babip~1, train_babip)), # Lower bound is the foundation for "Forward"
+                  upper = formula(lm(babip~., train_babip))), # Upper bound is the foundation for "Back"
+                  direction = "both", trace = 0)
+
+rsq_back_babip <- summary(back_model_babip)$adj.r.squared
+rsq_fwd_babip <- summary(fwd_model_babip)$adj.r.squared
+rsq_both_babip <- summary(both_model_babip)$adj.r.squared
+
+# cv.glmnet selected to allow for cross validation to occur.
+lasso_babip <- cv.glmnet(x = as.matrix(train_babip[,-train_cols_babip]), 
+                         y = as.matrix(train_babip[,train_cols_babip]), 
+                         alpha = 1, # 1 for Lasso Regression
+                         nfolds = ncol(train_babip)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE) 
+
+
+elastic_babip <- cv.glmnet(x = as.matrix(train_babip[,-train_cols_babip]), 
+                         y = as.matrix(train_babip[,train_cols_babip]), 
+                         alpha = 0, # 1 for Lasso Regression
+                         nfolds = ncol(train_babip)-1, 
+                         type.measure='mse',
+                         family='gaussian',
+                         standardize = TRUE)
+
+
+linear_pred_babip <- predict(lmodel_babip, valid_babip[,-valid_cols_babip])
+back_pred_babip <- predict(back_model_babip, valid_babip[,-valid_cols_babip])
+fwd_pred_babip <- predict(fwd_model_babip, valid_babip[,-valid_cols_babip])
+both_pred_babip <- predict(both_model_babip, valid_babip[,-valid_cols_babip])
+lasso_pred_babip <- predict(lasso_babip, as.matrix(valid_babip[,-valid_cols_babip]), s = 'lambda.min', type = 'class')
+elastic_pred_babip <- predict(elastic_babip, as.matrix(valid_babip[,-valid_cols_babip]), s = 'lambda.min', type = 'class')
+
+valid_babip$linear_babip<- linear_pred_babip
+valid_babip$back_babip<- back_pred_babip
+valid_babip$fwd_babip<- fwd_pred_babip
+valid_babip$both_babip<- both_pred_babip
+valid_babip$lasso_babip<- lasso_pred_babip
+valid_babip$elastic_babip<- elastic_pred_babip
+valid_babip$lin_err <-((valid_babip$babip / valid_babip$linear_babip)-1)*100
+valid_babip$back_err <- ((valid_babip$babip / valid_babip$back_babip)-1)*100
+valid_babip$fwd_err <- ((valid_babip$babip / valid_babip$fwd_babip)-1)*100
+valid_babip$both_err <- ((valid_babip$babip / valid_babip$both_babip)-1)*100
+valid_babip$lasso_err <- ((valid_babip$babip / valid_babip$lasso_babip)-1)*100
+valid_babip$elastic_err <- ((valid_babip$babip / valid_babip$elastic_babip)-1)*100
+lin_err_babip <- mean(valid_babip$lin_err)
+back_err_babip <- mean(valid_babip$back_err)
+fwd_err_babip <- mean(valid_babip$fwd_err)
+both_err_babip <- mean(valid_babip$both_err)
+lasso_err_babip <- mean(valid_babip$lasso_err)
+elastic_err_babip <- mean(valid_babip$elastic_err)
+
+model_review_babip <- data.frame()
+model_review_babip <- rbind(model_review_babip,
+                      data.frame(Method = c("Linear","Step Back", "Step Forward", "Step Both", "Lasso","Elastic-Net"), 
+                      R_Squared = c(summary(lmodel_babip)$r.squared, 
+                                    rsq_back_babip, 
+                                    rsq_fwd_babip, 
+                                    rsq_both_babip,
+                                    eval_results(valid_babip$babip,lasso_pred_babip, valid_babip)$R_sq,
+                                    eval_results(valid_babip$babip,elastic_pred_babip, valid_babip)$R_sq
+                                    ), 
+                      RMSE = c(eval_results(valid_babip$babip,linear_pred_babip, valid_babip)$RMSE,
+                               eval_results(valid_babip$babip,back_pred_babip, valid_babip)$RMSE,
+                               eval_results(valid_babip$babip,fwd_pred_babip, valid_babip)$RMSE,
+                               eval_results(valid_babip$babip,both_pred_babip, valid_babip)$RMSE,
+                               eval_results(valid_babip$babip,lasso_pred_babip, valid_babip)$RMSE,
+                               eval_results(valid_babip$babip,elastic_pred_babip, valid_babip)$RMSE
+                               ),
+                      babip_Err_Pct = c(lin_err_babip,back_err_babip,fwd_err_babip,both_err_babip,lasso_err_babip,elastic_err_babip)))
+
+model_review_babip <- (model_review_babip[order(-model_review_babip$babip_Err_Pct,model_review_babip$RMSE),])
+model_review_babip
+```
+
+
+```{r Assigning Predictions to the dataset}
+babipcol <- which( colnames(full_babip)=="babip" )
+sbc_2039$pred_babip <- predict(lasso_babip, as.matrix(full_babip[,-babipcol]), s = 'lambda.min', type = 'class')*(1-(lasso_err_babip/100))
+```
+
+
+
+```{r}
+sbc_final <- sbc_2039[,c(2:4,9,72:77)]
+write.csv(sbc_final,"~\\Analysis Projects\\SBC\\2034\\2039_batter_predictions.csv")
+```
+
